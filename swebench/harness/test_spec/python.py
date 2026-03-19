@@ -15,7 +15,7 @@ from swebench.harness.constants import (
     END_TEST_OUTPUT,
     REPO_BASE_COMMIT_BRANCH,
 )
-from swebench.harness.utils import get_modified_files, load_cached_environment_yml
+from swebench.harness.utils import get_modified_files, get_new_files, load_cached_environment_yml
 from functools import cache
 
 HEADERS = {
@@ -409,9 +409,18 @@ def make_eval_script_list_py(
     Applies the test patch and runs the tests.
     """
     HEREDOC_DELIMITER = "EOF_114329324912"
-    test_files = get_modified_files(test_patch)
-    # Reset test files to the state they should be in before the patch.
-    reset_tests_command = f"git checkout {base_commit} {' '.join(test_files)}"
+    # Separate modified files (exist at base commit) from new files.
+    # get_modified_files() only returns files with a real source (not /dev/null),
+    # i.e. modified files. New files need `rm -f` instead of `git checkout`.
+    # Without this, `git checkout {base_commit}` with no file args resets the
+    # entire working tree, undoing image setup changes. (#518)
+    modified_files = get_modified_files(test_patch)
+    new_files = get_new_files(test_patch)
+    reset_commands = []
+    if modified_files:
+        reset_commands.append(f"git checkout {base_commit} {' '.join(modified_files)}")
+    if new_files:
+        reset_commands.append(f"rm -f {' '.join(new_files)}")
     apply_test_patch_command = (
         f"git apply -v - <<'{HEREDOC_DELIMITER}'\n{test_patch}\n{HEREDOC_DELIMITER}"
     )
@@ -442,12 +451,12 @@ def make_eval_script_list_py(
     ]
     if "install" in specs:
         eval_commands.append(specs["install"])
+    eval_commands += reset_commands
     eval_commands += [
-        reset_tests_command,
         apply_test_patch_command,
         f": '{START_TEST_OUTPUT}'",
         test_command,
         f": '{END_TEST_OUTPUT}'",
-        reset_tests_command,  # Revert tests after done, leave the repo in the same state as before
     ]
+    eval_commands += reset_commands  # Revert tests after done
     return eval_commands

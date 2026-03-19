@@ -144,6 +144,8 @@ def load_swebench_dataset(
         dataset = json.loads(Path(name).read_text())
     elif name.endswith(".jsonl"):
         dataset = [json.loads(line) for line in Path(name).read_text().splitlines()]
+    elif name.endswith(".parquet"):
+        dataset = cast(Dataset, load_dataset("parquet", data_files=name, split="train"))
     else:
         # Load from Hugging Face Datasets
         if name.lower() in {"swe-bench", "swebench", "swe_bench"}:
@@ -156,7 +158,10 @@ def load_swebench_dataset(
             "lite",
         }:
             name = "SWE-bench/SWE-bench_Lite"
-        if (Path(name) / split / "dataset_info.json").exists():
+        parquet_path = Path(name) / f"{split}.parquet"
+        if parquet_path.exists():
+            dataset = cast(Dataset, load_dataset("parquet", data_files=str(parquet_path), split="train"))
+        elif (Path(name) / split / "dataset_info.json").exists():
             dataset = cast(Dataset, load_from_disk(Path(name) / split))
         else:
             dataset = cast(Dataset, load_dataset(name, split=split))
@@ -333,7 +338,7 @@ def get_repo_file(repo, commit, filepath):
 
 def get_modified_files(patch: str) -> list[str]:
     """
-    Get the list of modified files in a patch
+    Get the list of modified files in a patch (excludes new files).
     """
     source_files = []
     for file in PatchSet(patch):
@@ -341,6 +346,20 @@ def get_modified_files(patch: str) -> list[str]:
             source_files.append(file.source_file)
     source_files = [x[2:] for x in source_files if x.startswith("a/")]
     return source_files
+
+
+def get_new_files(patch: str) -> list[str]:
+    """
+    Get the list of new files in a patch (source is /dev/null).
+    """
+    new_files = []
+    for file in PatchSet(patch):
+        if file.source_file == "/dev/null":
+            target = file.target_file
+            if target.startswith("b/"):
+                target = target[2:]
+            new_files.append(target)
+    return new_files
 
 
 def ansi_escape(text: str) -> str:
